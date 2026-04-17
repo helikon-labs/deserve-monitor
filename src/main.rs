@@ -216,6 +216,8 @@ async fn main() {
         axum::serve(listener, router).await.unwrap();
     });
 
+    let mut first_run = true;
+
     loop {
         let mut round: Vec<(u32, Measurement)> = Vec::new();
 
@@ -288,13 +290,14 @@ async fn main() {
             round.push((endpoint.id, measurement));
         }
 
-        {
+        if !first_run {
             let mut measurements = measurements.lock().unwrap();
             for (endpoint_id, measurement) in round {
                 push_measurement(&mut measurements, endpoint_id, measurement);
             }
         }
 
+        first_run = false;
         tokio::time::sleep(POLL_INTERVAL).await;
     }
 }
