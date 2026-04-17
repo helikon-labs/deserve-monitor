@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 use std::error::Error as StdError;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize)]
 struct Endpoint {
@@ -227,7 +227,6 @@ async fn main() {
         let mut round: Vec<(u32, Measurement)> = Vec::new();
 
         for endpoint in ENDPOINTS.iter().rev() {
-            let start = Instant::now();
             let started_at = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -238,11 +237,11 @@ async fn main() {
                 .body(RPC_BODY)
                 .send()
                 .await;
-            let latency = start.elapsed();
             let ended_at = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis();
+            let latency = Duration::from_millis((ended_at - started_at) as u64);
 
             let measurement = match result {
                 Ok(response) => {
