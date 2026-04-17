@@ -10,6 +10,7 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[derive(Serialize)]
 struct Endpoint {
     id: u32,
     url: &'static str,
@@ -59,6 +60,10 @@ fn push_measurement(
     records.push(record);
 }
 
+async fn get_endpoints() -> Json<&'static [Endpoint]> {
+    Json(ENDPOINTS)
+}
+
 async fn get_measurements(
     State(measurements): State<Measurements>,
 ) -> Json<HashMap<u32, Vec<Measurement>>> {
@@ -71,11 +76,12 @@ async fn main() {
     let client = Arc::new(reqwest::Client::new());
 
     let router = Router::new()
+        .route("/endpoints", get(get_endpoints))
         .route("/measurements", get(get_measurements))
         .with_state(Arc::clone(&measurements));
 
     tokio::spawn(async move {
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+        let listener = tokio::net::TcpListener::bind("0.0.0.0:1881").await.unwrap();
         axum::serve(listener, router).await.unwrap();
     });
 
