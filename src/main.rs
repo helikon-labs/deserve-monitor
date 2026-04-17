@@ -132,6 +132,7 @@ struct EndpointStats {
     average_latency: u128,
     median_latency: u128,
     p95_latency: u128,
+    success_percent: f64,
     measurements: Vec<Measurement>,
 }
 
@@ -172,12 +173,20 @@ async fn get_measurements(
                 latencies[idx]
             };
 
+            let success_percent = if records.is_empty() {
+                0.0
+            } else {
+                let successful = records.iter().filter(|m| m.is_successful).count();
+                (successful as f64 / records.len() as f64 * 100.0 * 10.0).round() / 10.0
+            };
+
             (
                 *id,
                 EndpointStats {
                     average_latency,
                     median_latency,
                     p95_latency,
+                    success_percent,
                     measurements: records.clone(),
                 },
             )
