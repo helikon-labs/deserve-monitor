@@ -38,7 +38,7 @@ const ENDPOINTS: &[Endpoint] = &[
 const MAX_LATENCY_RECORDS: usize = 50;
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const SLEEP_TIMEOUT: Duration = Duration::from_secs(10);
+const POLL_INTERVAL: Duration = Duration::from_secs(10);
 const RPC_BODY: &str =
     r#"{"id":"1","jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}"#;
 
@@ -216,6 +216,6 @@ async fn main() {
             });
         }
 
-        tokio::time::sleep(SLEEP_TIMEOUT).await;
+        tokio::time::sleep(POLL_INTERVAL).await;
     }
 }
