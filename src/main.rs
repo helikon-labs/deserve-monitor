@@ -110,6 +110,19 @@ fn push_measurement(
     records.push(record);
 }
 
+#[derive(Serialize)]
+struct Info {
+    version: &'static str,
+    location: String,
+}
+
+async fn get_info() -> Json<Info> {
+    Json(Info {
+        version: env!("CARGO_PKG_VERSION"),
+        location: std::env::var("LOCATION").unwrap_or_default(),
+    })
+}
+
 async fn get_endpoints() -> Json<&'static [Endpoint]> {
     Json(ENDPOINTS)
 }
@@ -132,6 +145,7 @@ async fn main() {
     );
 
     let router = Router::new()
+        .route("/info", get(get_info))
         .route("/endpoints", get(get_endpoints))
         .route("/measurements", get(get_measurements))
         .with_state(Arc::clone(&measurements));
