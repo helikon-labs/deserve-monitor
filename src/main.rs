@@ -136,13 +136,11 @@ async fn get_measurements(
 #[tokio::main]
 async fn main() {
     let measurements: Measurements = Arc::new(Mutex::new(HashMap::default()));
-    let client = Arc::new(
-        reqwest::Client::builder()
-            .connect_timeout(CONNECTION_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .unwrap(),
-    );
+    let client = reqwest::Client::builder()
+        .connect_timeout(CONNECTION_TIMEOUT)
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .unwrap();
 
     let router = Router::new()
         .route("/", get(get_info))
@@ -156,78 +154,82 @@ async fn main() {
     });
 
     loop {
-        for endpoint in ENDPOINTS {
-            let measurements = Arc::clone(&measurements);
-            let client = Arc::clone(&client);
-            tokio::spawn(async move {
-                let start = Instant::now();
-                let started_at = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis();
-                let result = client
-                    .post(endpoint.url)
-                    .header(CONTENT_TYPE, "application/json")
-                    .body(RPC_BODY)
-                    .send()
-                    .await;
-                let latency = start.elapsed();
-                let ended_at = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis();
+        let mut round: Vec<(u32, Measurement)> = Vec::new();
 
-                let measurement = match result {
-                    Ok(response) => {
-                        let ip = response.remote_addr().map(|a| a.ip());
-                        let status = response.status();
-                        if status.is_success() {
-                            println!(
-                                "[{}] {} ({}) — {}ms",
-                                endpoint.id,
-                                endpoint.url,
-                                ip.map_or("-".to_string(), |ip| ip.to_string()),
-                                latency.as_millis()
-                            );
-                            Measurement {
-                                started_at,
-                                ended_at,
-                                is_successful: true,
-                                latency: Some(latency),
-                                ip,
-                                error: None,
-                            }
-                        } else {
-                            let body = response.text().await.unwrap_or_default();
-                            let error = format!("HTTP {} — {}", status, body.trim());
-                            eprintln!("[{}] {} — {}", endpoint.id, endpoint.url, error);
-                            Measurement {
-                                started_at,
-                                ended_at,
-                                is_successful: false,
-                                latency: Some(latency),
-                                ip,
-                                error: Some(error),
-                            }
+        for endpoint in ENDPOINTS {
+            let start = Instant::now();
+            let started_at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+            let result = client
+                .post(endpoint.url)
+                .header(CONTENT_TYPE, "application/json")
+                .body(RPC_BODY)
+                .send()
+                .await;
+            let latency = start.elapsed();
+            let ended_at = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis();
+
+            let measurement = match result {
+                Ok(response) => {
+                    let ip = response.remote_addr().map(|a| a.ip());
+                    let status = response.status();
+                    if status.is_success() {
+                        println!(
+                            "[{}] {} ({}) — {}ms",
+                            endpoint.id,
+                            endpoint.url,
+                            ip.map_or("-".to_string(), |ip| ip.to_string()),
+                            latency.as_millis()
+                        );
+                        Measurement {
+                            started_at,
+                            ended_at,
+                            is_successful: true,
+                            latency: Some(latency),
+                            ip,
+                            error: None,
                         }
-                    }
-                    Err(e) => {
-                        let error = describe_reqwest_error(&e);
+                    } else {
+                        let body = response.text().await.unwrap_or_default();
+                        let error = format!("HTTP {} — {}", status, body.trim());
                         eprintln!("[{}] {} — {}", endpoint.id, endpoint.url, error);
                         Measurement {
                             started_at,
                             ended_at,
                             is_successful: false,
-                            latency: None,
-                            ip: None,
+                            latency: Some(latency),
+                            ip,
                             error: Some(error),
                         }
                     }
-                };
+                }
+                Err(e) => {
+                    let error = describe_reqwest_error(&e);
+                    eprintln!("[{}] {} — {}", endpoint.id, endpoint.url, error);
+                    Measurement {
+                        started_at,
+                        ended_at,
+                        is_successful: false,
+                        latency: None,
+                        ip: None,
+                        error: Some(error),
+                    }
+                }
+            };
 
-                let mut measurements = measurements.lock().unwrap();
-                push_measurement(&mut measurements, endpoint.id, measurement);
-            });
+            round.push((endpoint.id, measurement));
+        }
+
+        {
+            let mut measurements = measurements.lock().unwrap();
+            for (endpoint_id, measurement) in round {
+                push_measurement(&mut measurements, endpoint_id, measurement);
+            }
         }
 
         tokio::time::sleep(POLL_INTERVAL).await;
