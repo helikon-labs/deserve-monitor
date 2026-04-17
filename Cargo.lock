@@ -187,6 +187,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "reqwest",
+ "rustc-hash",
  "serde",
  "serde_json",
  "tokio",

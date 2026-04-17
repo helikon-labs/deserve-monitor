@@ -1,12 +1,14 @@
-use std::collections::HashMap;
-use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#![warn(clippy::disallowed_types)]
+
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
 use reqwest::header::CONTENT_TYPE;
+use rustc_hash::FxHashMap as HashMap;
 use serde::Serialize;
+use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 struct Endpoint {
     id: u32,
@@ -14,11 +16,18 @@ struct Endpoint {
 }
 
 const ENDPOINTS: &[Endpoint] = &[
-    Endpoint { id: 0, url: "https://asset-hub.polkadot.rpc.deserve.network" },
-    Endpoint { id: 1, url: "https://asset-hub-polkadot.ibp.network" },
+    Endpoint {
+        id: 0,
+        url: "https://asset-hub.polkadot.rpc.deserve.network",
+    },
+    Endpoint {
+        id: 1,
+        url: "https://asset-hub-polkadot.ibp.network",
+    },
 ];
 const MAX_LATENCY_RECORDS: usize = 50;
-const RPC_BODY: &str = r#"{"id":"1","jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}"#;
+const RPC_BODY: &str =
+    r#"{"id":"1","jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}"#;
 
 #[derive(Clone, Serialize)]
 struct Measurement {
@@ -29,13 +38,20 @@ struct Measurement {
     ip: IpAddr,
 }
 
-fn serialize_duration_as_millis<S: serde::Serializer>(d: &Duration, s: S) -> Result<S::Ok, S::Error> {
+fn serialize_duration_as_millis<S: serde::Serializer>(
+    d: &Duration,
+    s: S,
+) -> Result<S::Ok, S::Error> {
     s.serialize_u128(d.as_millis())
 }
 
 type Measurements = Arc<Mutex<HashMap<u32, Vec<Measurement>>>>;
 
-fn push_measurement(measurements: &mut HashMap<u32, Vec<Measurement>>, endpoint_id: u32, record: Measurement) {
+fn push_measurement(
+    measurements: &mut HashMap<u32, Vec<Measurement>>,
+    endpoint_id: u32,
+    record: Measurement,
+) {
     let records = measurements.entry(endpoint_id).or_default();
     if records.len() == MAX_LATENCY_RECORDS {
         records.remove(0);
@@ -43,13 +59,15 @@ fn push_measurement(measurements: &mut HashMap<u32, Vec<Measurement>>, endpoint_
     records.push(record);
 }
 
-async fn get_measurements(State(measurements): State<Measurements>) -> Json<HashMap<u32, Vec<Measurement>>> {
+async fn get_measurements(
+    State(measurements): State<Measurements>,
+) -> Json<HashMap<u32, Vec<Measurement>>> {
     Json(measurements.lock().unwrap().clone())
 }
 
 #[tokio::main]
 async fn main() {
-    let measurements: Measurements = Arc::new(Mutex::new(HashMap::new()));
+    let measurements: Measurements = Arc::new(Mutex::new(HashMap::default()));
     let client = Arc::new(reqwest::Client::new());
 
     let router = Router::new()
@@ -67,7 +85,10 @@ async fn main() {
             let client = Arc::clone(&client);
             tokio::spawn(async move {
                 let start = Instant::now();
-                let started_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+                let started_at = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
                 let result = client
                     .post(endpoint.url)
                     .header(CONTENT_TYPE, "application/json")
@@ -75,16 +96,39 @@ async fn main() {
                     .send()
                     .await;
                 let latency = start.elapsed();
-                let ended_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
+                let ended_at = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
 
                 match result {
                     Ok(response) => {
                         if let Some(ip) = response.remote_addr().map(|a| a.ip()) {
-                            println!("[{}] {} ({}) — {}ms", endpoint.id, endpoint.url, ip, latency.as_millis());
+                            println!(
+                                "[{}] {} ({}) — {}ms",
+                                endpoint.id,
+                                endpoint.url,
+                                ip,
+                                latency.as_millis()
+                            );
                             let mut measurements = measurements.lock().unwrap();
-                            push_measurement(&mut measurements, endpoint.id, Measurement { started_at, ended_at, latency, ip });
+                            push_measurement(
+                                &mut measurements,
+                                endpoint.id,
+                                Measurement {
+                                    started_at,
+                                    ended_at,
+                                    latency,
+                                    ip,
+                                },
+                            );
                         } else {
-                            println!("[{}] {} — {}ms (no IP)", endpoint.id, endpoint.url, latency.as_millis());
+                            println!(
+                                "[{}] {} — {}ms (no IP)",
+                                endpoint.id,
+                                endpoint.url,
+                                latency.as_millis()
+                            );
                         }
                     }
                     Err(e) => {
