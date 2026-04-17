@@ -6,6 +6,7 @@ use axum::{Json, Router};
 use reqwest::header::CONTENT_TYPE;
 use rustc_hash::FxHashMap as HashMap;
 use serde::Serialize;
+use std::error::Error as StdError;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -25,8 +26,19 @@ const ENDPOINTS: &[Endpoint] = &[
         id: 1,
         url: "https://asset-hub-polkadot.ibp.network",
     },
+    Endpoint {
+        id: 2,
+        url: "https://coretime.polkadot.rpc.deserve.network",
+    },
+    Endpoint {
+        id: 3,
+        url: "https://coretime-polkadot.ibp.network",
+    },
 ];
 const MAX_LATENCY_RECORDS: usize = 50;
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+const SLEEP_TIMEOUT: Duration = Duration::from_secs(10);
 const RPC_BODY: &str =
     r#"{"id":"1","jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}"#;
 
@@ -34,16 +46,54 @@ const RPC_BODY: &str =
 struct Measurement {
     started_at: u128,
     ended_at: u128,
-    #[serde(serialize_with = "serialize_duration_as_millis")]
-    latency: Duration,
-    ip: IpAddr,
+    is_successful: bool,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_opt_duration_as_millis"
+    )]
+    latency: Option<Duration>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ip: Option<IpAddr>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
-fn serialize_duration_as_millis<S: serde::Serializer>(
-    d: &Duration,
+fn describe_reqwest_error(e: &reqwest::Error) -> String {
+    let kind = if e.is_timeout() {
+        "timeout"
+    } else if e.is_connect() {
+        "connect"
+    } else if e.is_request() {
+        "request"
+    } else if e.is_body() {
+        "body"
+    } else if e.is_decode() {
+        "decode"
+    } else {
+        "unknown"
+    };
+
+    let mut source: Option<&dyn StdError> = e.source();
+    let mut root_cause = None;
+    while let Some(s) = source {
+        root_cause = Some(s.to_string());
+        source = s.source();
+    }
+
+    match root_cause {
+        Some(cause) => format!("{}: {}", kind, cause),
+        None => kind.to_string(),
+    }
+}
+
+fn serialize_opt_duration_as_millis<S: serde::Serializer>(
+    d: &Option<Duration>,
     s: S,
 ) -> Result<S::Ok, S::Error> {
-    s.serialize_u128(d.as_millis())
+    match d {
+        Some(d) => s.serialize_u128(d.as_millis()),
+        None => s.serialize_none(),
+    }
 }
 
 type Measurements = Arc<Mutex<HashMap<u32, Vec<Measurement>>>>;
@@ -73,7 +123,13 @@ async fn get_measurements(
 #[tokio::main]
 async fn main() {
     let measurements: Measurements = Arc::new(Mutex::new(HashMap::default()));
-    let client = Arc::new(reqwest::Client::new());
+    let client = Arc::new(
+        reqwest::Client::builder()
+            .connect_timeout(CONNECTION_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .unwrap(),
+    );
 
     let router = Router::new()
         .route("/endpoints", get(get_endpoints))
@@ -107,43 +163,59 @@ async fn main() {
                     .unwrap()
                     .as_millis();
 
-                match result {
+                let measurement = match result {
                     Ok(response) => {
-                        if let Some(ip) = response.remote_addr().map(|a| a.ip()) {
+                        let ip = response.remote_addr().map(|a| a.ip());
+                        let status = response.status();
+                        if status.is_success() {
                             println!(
                                 "[{}] {} ({}) — {}ms",
                                 endpoint.id,
                                 endpoint.url,
+                                ip.map_or("-".to_string(), |ip| ip.to_string()),
+                                latency.as_millis()
+                            );
+                            Measurement {
+                                started_at,
+                                ended_at,
+                                is_successful: true,
+                                latency: Some(latency),
                                 ip,
-                                latency.as_millis()
-                            );
-                            let mut measurements = measurements.lock().unwrap();
-                            push_measurement(
-                                &mut measurements,
-                                endpoint.id,
-                                Measurement {
-                                    started_at,
-                                    ended_at,
-                                    latency,
-                                    ip,
-                                },
-                            );
+                                error: None,
+                            }
                         } else {
-                            println!(
-                                "[{}] {} — {}ms (no IP)",
-                                endpoint.id,
-                                endpoint.url,
-                                latency.as_millis()
-                            );
+                            let body = response.text().await.unwrap_or_default();
+                            let error = format!("HTTP {} — {}", status, body.trim());
+                            eprintln!("[{}] {} — {}", endpoint.id, endpoint.url, error);
+                            Measurement {
+                                started_at,
+                                ended_at,
+                                is_successful: false,
+                                latency: Some(latency),
+                                ip,
+                                error: Some(error),
+                            }
                         }
                     }
                     Err(e) => {
-                        eprintln!("[{}] {} — error: {}", endpoint.id, endpoint.url, e);
+                        let error = describe_reqwest_error(&e);
+                        eprintln!("[{}] {} — {}", endpoint.id, endpoint.url, error);
+                        Measurement {
+                            started_at,
+                            ended_at,
+                            is_successful: false,
+                            latency: None,
+                            ip: None,
+                            error: Some(error),
+                        }
                     }
-                }
+                };
+
+                let mut measurements = measurements.lock().unwrap();
+                push_measurement(&mut measurements, endpoint.id, measurement);
             });
         }
 
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(SLEEP_TIMEOUT).await;
     }
 }
