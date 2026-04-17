@@ -226,7 +226,7 @@ async fn main() {
     loop {
         let mut round: Vec<(u32, Measurement)> = Vec::new();
 
-        for endpoint in ENDPOINTS {
+        for endpoint in ENDPOINTS.iter().rev() {
             let start = Instant::now();
             let started_at = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
