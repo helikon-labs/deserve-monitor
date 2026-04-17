@@ -127,10 +127,64 @@ async fn get_endpoints() -> Json<&'static [Endpoint]> {
     Json(ENDPOINTS)
 }
 
+#[derive(Serialize)]
+struct EndpointStats {
+    average_latency: u128,
+    median_latency: u128,
+    p95_latency: u128,
+    measurements: Vec<Measurement>,
+}
+
 async fn get_measurements(
     State(measurements): State<Measurements>,
-) -> Json<HashMap<u32, Vec<Measurement>>> {
-    Json(measurements.lock().unwrap().clone())
+) -> Json<HashMap<u32, EndpointStats>> {
+    let measurements = measurements.lock().unwrap();
+    let stats = measurements
+        .iter()
+        .map(|(id, records)| {
+            let mut latencies: Vec<u128> = records
+                .iter()
+                .filter_map(|m| m.latency.map(|d| d.as_millis()))
+                .collect();
+            latencies.sort_unstable();
+
+            let average_latency = if latencies.is_empty() {
+                0
+            } else {
+                latencies.iter().sum::<u128>() / latencies.len() as u128
+            };
+
+            let median_latency = if latencies.is_empty() {
+                0
+            } else {
+                let mid = latencies.len() / 2;
+                if latencies.len().is_multiple_of(2) {
+                    (latencies[mid - 1] + latencies[mid]) / 2
+                } else {
+                    latencies[mid]
+                }
+            };
+
+            let p95_latency = if latencies.is_empty() {
+                0
+            } else {
+                let idx = ((latencies.len() as f64 * 0.95).ceil() as usize).saturating_sub(1);
+                latencies[idx]
+            };
+
+            (
+                *id,
+                EndpointStats {
+                    average_latency,
+                    median_latency,
+                    p95_latency,
+                    measurements: records.clone(),
+                },
+            )
+        })
+        .collect();
+
+    Json(stats)
 }
 
 #[tokio::main]
