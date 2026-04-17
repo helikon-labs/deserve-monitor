@@ -35,12 +35,13 @@ const ENDPOINTS: &[Endpoint] = &[
         url: "https://coretime-polkadot.ibp.network",
     },
 ];
-const MAX_LATENCY_RECORDS: usize = 50;
+const MAX_LATENCY_RECORDS: usize = 360;
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
 const RPC_BODY: &str =
     r#"{"id":"1","jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}"#;
+const API_PORT: u16 = 1881;
 
 #[derive(Clone, Serialize)]
 struct Measurement {
@@ -131,6 +132,7 @@ async fn get_endpoints() -> Json<&'static [Endpoint]> {
 struct EndpointStats {
     average_latency: u128,
     median_latency: u128,
+    p90_latency: u128,
     p95_latency: u128,
     success_percent: f64,
     measurements: Vec<Measurement>,
@@ -166,6 +168,13 @@ async fn get_measurements(
                 }
             };
 
+            let p90_latency = if latencies.is_empty() {
+                0
+            } else {
+                let idx = ((latencies.len() as f64 * 0.90).ceil() as usize).saturating_sub(1);
+                latencies[idx]
+            };
+
             let p95_latency = if latencies.is_empty() {
                 0
             } else {
@@ -185,6 +194,7 @@ async fn get_measurements(
                 EndpointStats {
                     average_latency,
                     median_latency,
+                    p90_latency,
                     p95_latency,
                     success_percent,
                     measurements: records.clone(),
@@ -212,7 +222,9 @@ async fn main() {
         .with_state(Arc::clone(&measurements));
 
     tokio::spawn(async move {
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:1881").await.unwrap();
+        let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{API_PORT}"))
+            .await
+            .unwrap();
         axum::serve(listener, router).await.unwrap();
     });
 
