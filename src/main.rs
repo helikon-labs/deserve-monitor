@@ -24,15 +24,23 @@ const ENDPOINTS: &[Endpoint] = &[
     },
     Endpoint {
         id: 1,
-        url: "https://asset-hub-polkadot.ibp.network",
+        url: "https://coretime.polkadot.rpc.deserve.network",
     },
     Endpoint {
         id: 2,
-        url: "https://coretime.polkadot.rpc.deserve.network",
+        url: "https://asset-hub-polkadot.ibp.network",
     },
     Endpoint {
         id: 3,
         url: "https://coretime-polkadot.ibp.network",
+    },
+    Endpoint {
+        id: 4,
+        url: "https://asset-hub-polkadot.dotters.network",
+    },
+    Endpoint {
+        id: 5,
+        url: "https://coretime-polkadot.dotters.network",
     },
 ];
 const MAX_LATENCY_RECORDS: usize = 360;
