@@ -165,12 +165,8 @@ async fn get_measurements(
             let median_latency = if latencies.is_empty() {
                 0
             } else {
-                let mid = latencies.len() / 2;
-                if latencies.len().is_multiple_of(2) {
-                    (latencies[mid - 1] + latencies[mid]) / 2
-                } else {
-                    latencies[mid]
-                }
+                let idx = ((latencies.len() as f64 * 0.50).ceil() as usize).saturating_sub(1);
+                latencies[idx]
             };
 
             let p95_latency = if latencies.is_empty() {
