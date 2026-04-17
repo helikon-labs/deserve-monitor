@@ -145,7 +145,7 @@ async fn main() {
     );
 
     let router = Router::new()
-        .route("/info", get(get_info))
+        .route("/", get(get_info))
         .route("/endpoints", get(get_endpoints))
         .route("/measurements", get(get_measurements))
         .with_state(Arc::clone(&measurements));
