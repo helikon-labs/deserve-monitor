@@ -6,6 +6,7 @@ use axum::{Json, Router};
 use reqwest::header::CONTENT_TYPE;
 use rustc_hash::FxHashMap as HashMap;
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::error::Error as StdError;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
@@ -99,24 +100,21 @@ fn serialize_opt_duration_as_millis<S: serde::Serializer>(
     d: &Option<Duration>,
     s: S,
 ) -> Result<S::Ok, S::Error> {
-    match d {
-        Some(d) => s.serialize_u128(d.as_millis()),
-        None => s.serialize_none(),
-    }
+    s.serialize_u128(d.unwrap().as_millis())
 }
 
-type Measurements = Arc<Mutex<HashMap<u32, Vec<Measurement>>>>;
+type Measurements = Arc<Mutex<HashMap<u32, VecDeque<Measurement>>>>;
 
 fn push_measurement(
-    measurements: &mut HashMap<u32, Vec<Measurement>>,
+    measurements: &mut HashMap<u32, VecDeque<Measurement>>,
     endpoint_id: u32,
     record: Measurement,
 ) {
     let records = measurements.entry(endpoint_id).or_default();
     if records.len() == MAX_LATENCY_RECORDS {
-        records.remove(0);
+        records.pop_front();
     }
-    records.push(record);
+    records.push_back(record);
 }
 
 #[derive(Serialize)]
@@ -140,10 +138,9 @@ async fn get_endpoints() -> Json<&'static [Endpoint]> {
 struct EndpointStats {
     average_latency: u128,
     median_latency: u128,
-    p90_latency: u128,
     p95_latency: u128,
     success_percent: f64,
-    measurements: Vec<Measurement>,
+    measurements: VecDeque<Measurement>,
 }
 
 async fn get_measurements(
@@ -176,13 +173,6 @@ async fn get_measurements(
                 }
             };
 
-            let p90_latency = if latencies.is_empty() {
-                0
-            } else {
-                let idx = ((latencies.len() as f64 * 0.90).ceil() as usize).saturating_sub(1);
-                latencies[idx]
-            };
-
             let p95_latency = if latencies.is_empty() {
                 0
             } else {
@@ -202,7 +192,6 @@ async fn get_measurements(
                 EndpointStats {
                     average_latency,
                     median_latency,
-                    p90_latency,
                     p95_latency,
                     success_percent,
                     measurements: records.clone(),
