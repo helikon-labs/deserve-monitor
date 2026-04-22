@@ -1,0 +1,52 @@
+name: Format, Clippy and Tests
+
+on:
+  push:
+    branches:
+      - development
+      - main
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  format-clippy-test:
+    name: Format, Clippy and Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Install Rust Toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: nightly #-2025-08-01 # toolchain
+          components: clippy, rustfmt
+          override: true
+      - run: rustup update
+      - run: rustup update nightly #-2025-08-01 # toolchain
+      - run: rustup default nightly #-2025-08-01 # toolchain
+      - run: rustup target add wasm32-unknown-unknown --toolchain nightly #-2025-08-01 # toolchain
+      - run: rustup default stable
+      - name: Format
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+      - name: Clippy
+        uses: actions-rs/cargo@v1
+        with:
+          toolchain: nightly #-2025-08-01 # toolchain
+          command: clippy
+          args: --all-targets -- -D warnings -W clippy::too_many_lines -W clippy::excessive_nesting
+      - name: Test
+        uses: actions-rs/cargo@v1
+        env:
+          RUST_TEST_THREADS: 1
+        with:
+          command: test

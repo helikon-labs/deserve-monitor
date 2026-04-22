@@ -1,109 +1,20 @@
 #![warn(clippy::disallowed_types)]
 
+use crate::types::{EndpointStats, Measurement, Measurements};
 use axum::extract::State;
 use axum::routing::get;
 use axum::{Json, Router};
 use reqwest::header::CONTENT_TYPE;
 use rustc_hash::FxHashMap as HashMap;
-use serde::Serialize;
 use std::collections::VecDeque;
-use std::error::Error as StdError;
-use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[derive(Serialize)]
-struct Endpoint {
-    id: u32,
-    url: &'static str,
-}
-
-const ENDPOINTS: &[Endpoint] = &[
-    Endpoint {
-        id: 0,
-        url: "https://asset-hub.polkadot.rpc.deserve.network",
-    },
-    Endpoint {
-        id: 1,
-        url: "https://coretime.polkadot.rpc.deserve.network",
-    },
-    Endpoint {
-        id: 2,
-        url: "https://asset-hub-polkadot.ibp.network",
-    },
-    Endpoint {
-        id: 3,
-        url: "https://coretime-polkadot.ibp.network",
-    },
-    Endpoint {
-        id: 4,
-        url: "https://asset-hub-polkadot.dotters.network",
-    },
-    Endpoint {
-        id: 5,
-        url: "https://coretime-polkadot.dotters.network",
-    },
-];
-const MAX_LATENCY_RECORDS: usize = 360;
-const CONNECTION_TIMEOUT: Duration = Duration::from_secs(10);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
-const POLL_INTERVAL: Duration = Duration::from_secs(10);
-const RPC_BODY: &str =
-    r#"{"id":"1","jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}"#;
-const API_PORT: u16 = 1881;
-
-#[derive(Clone, Serialize)]
-struct Measurement {
-    started_at: u128,
-    ended_at: u128,
-    is_successful: bool,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        serialize_with = "serialize_opt_duration_as_millis"
-    )]
-    latency: Option<Duration>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    ip: Option<IpAddr>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
-}
-
-fn describe_reqwest_error(e: &reqwest::Error) -> String {
-    let kind = if e.is_timeout() {
-        "timeout"
-    } else if e.is_connect() {
-        "connect"
-    } else if e.is_request() {
-        "request"
-    } else if e.is_body() {
-        "body"
-    } else if e.is_decode() {
-        "decode"
-    } else {
-        "unknown"
-    };
-
-    let mut source: Option<&dyn StdError> = e.source();
-    let mut root_cause = None;
-    while let Some(s) = source {
-        root_cause = Some(s.to_string());
-        source = s.source();
-    }
-
-    match root_cause {
-        Some(cause) => format!("{}: {}", kind, cause),
-        None => kind.to_string(),
-    }
-}
-
-fn serialize_opt_duration_as_millis<S: serde::Serializer>(
-    d: &Option<Duration>,
-    s: S,
-) -> Result<S::Ok, S::Error> {
-    s.serialize_u128(d.unwrap().as_millis())
-}
-
-type Measurements = Arc<Mutex<HashMap<u32, VecDeque<Measurement>>>>;
+mod api;
+mod constants;
+mod data;
+mod types;
+mod util;
 
 fn push_measurement(
     measurements: &mut HashMap<u32, VecDeque<Measurement>>,
@@ -111,36 +22,10 @@ fn push_measurement(
     record: Measurement,
 ) {
     let records = measurements.entry(endpoint_id).or_default();
-    if records.len() == MAX_LATENCY_RECORDS {
+    if records.len() == constants::MAX_LATENCY_RECORDS {
         records.pop_front();
     }
     records.push_back(record);
-}
-
-#[derive(Serialize)]
-struct Info {
-    version: &'static str,
-    location: String,
-}
-
-async fn get_info() -> Json<Info> {
-    Json(Info {
-        version: env!("CARGO_PKG_VERSION"),
-        location: std::env::var("LOCATION").unwrap_or_default(),
-    })
-}
-
-async fn get_endpoints() -> Json<&'static [Endpoint]> {
-    Json(ENDPOINTS)
-}
-
-#[derive(Serialize)]
-struct EndpointStats {
-    average_latency: u128,
-    median_latency: u128,
-    p95_latency: u128,
-    success_percent: f64,
-    measurements: VecDeque<Measurement>,
 }
 
 async fn get_measurements(
@@ -203,19 +88,19 @@ async fn get_measurements(
 async fn main() {
     let measurements: Measurements = Arc::new(Mutex::new(HashMap::default()));
     let client = reqwest::Client::builder()
-        .connect_timeout(CONNECTION_TIMEOUT)
-        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(constants::CONNECTION_TIMEOUT)
+        .timeout(constants::REQUEST_TIMEOUT)
         .build()
         .unwrap();
 
     let router = Router::new()
-        .route("/", get(get_info))
-        .route("/endpoints", get(get_endpoints))
+        .route("/", get(api::get_info))
+        .route("/endpoints", get(api::get_endpoints))
         .route("/measurements", get(get_measurements))
         .with_state(Arc::clone(&measurements));
 
     tokio::spawn(async move {
-        let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{API_PORT}"))
+        let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", constants::API_PORT))
             .await
             .unwrap();
         axum::serve(listener, router).await.unwrap();
@@ -226,7 +111,7 @@ async fn main() {
     loop {
         let mut round: Vec<(u32, Measurement)> = Vec::new();
 
-        for endpoint in ENDPOINTS.iter().rev() {
+        for endpoint in data::ENDPOINTS.iter().rev() {
             let started_at = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
@@ -234,7 +119,7 @@ async fn main() {
             let result = client
                 .post(endpoint.url)
                 .header(CONTENT_TYPE, "application/json")
-                .body(RPC_BODY)
+                .body(constants::RPC_BODY)
                 .send()
                 .await;
             let ended_at = SystemTime::now()
@@ -278,7 +163,7 @@ async fn main() {
                     }
                 }
                 Err(e) => {
-                    let error = describe_reqwest_error(&e);
+                    let error = util::describe_reqwest_error(&e);
                     eprintln!("[{}] {} — {}", endpoint.id, endpoint.url, error);
                     Measurement {
                         started_at,
@@ -302,6 +187,6 @@ async fn main() {
         }
 
         first_run = false;
-        tokio::time::sleep(POLL_INTERVAL).await;
+        tokio::time::sleep(constants::POLL_INTERVAL).await;
     }
 }
