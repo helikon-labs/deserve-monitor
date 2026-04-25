@@ -87,16 +87,12 @@ async fn get_measurements(
 #[tokio::main]
 async fn main() {
     let measurements: Measurements = Arc::new(Mutex::new(HashMap::default()));
-    let client = reqwest::Client::builder()
-        .connect_timeout(constants::CONNECTION_TIMEOUT)
-        .timeout(constants::REQUEST_TIMEOUT)
-        .build()
-        .unwrap();
-
     let router = Router::new()
         .route("/", get(api::get_info))
+        .route("/chains", get(api::get_chains))
         .route("/endpoints", get(api::get_endpoints))
         .route("/measurements", get(get_measurements))
+        .route("/providers", get(api::get_providers))
         .with_state(Arc::clone(&measurements));
 
     tokio::spawn(async move {
@@ -106,87 +102,90 @@ async fn main() {
         axum::serve(listener, router).await.unwrap();
     });
 
-    let mut first_run = true;
-
+    let mut _round_index: u64 = 0;
     loop {
         let mut round: Vec<(u32, Measurement)> = Vec::new();
-
+        let client = reqwest::Client::builder()
+            .connect_timeout(constants::CONNECTION_TIMEOUT)
+            .timeout(constants::REQUEST_TIMEOUT)
+            .build()
+            .unwrap();
         for endpoint in data::ENDPOINTS.iter().rev() {
-            let started_at = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis();
-            let result = client
-                .post(endpoint.url)
-                .header(CONTENT_TYPE, "application/json")
-                .body(constants::RPC_BODY)
-                .send()
-                .await;
-            let ended_at = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis();
-            let latency = Duration::from_millis((ended_at - started_at) as u64);
+            for _ in 0..5 {
+                let started_at = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
+                let result = client
+                    .post(format!("https://{}", endpoint.url))
+                    .header(CONTENT_TYPE, "application/json")
+                    .body(endpoint.service_type.get_request_body())
+                    .send()
+                    .await;
+                let ended_at = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
+                let latency = Duration::from_millis((ended_at - started_at) as u64);
 
-            let measurement = match result {
-                Ok(response) => {
-                    let ip = response.remote_addr().map(|a| a.ip());
-                    let status = response.status();
-                    if status.is_success() {
-                        println!(
-                            "[{}] {} ({}) — {}ms",
-                            endpoint.id,
-                            endpoint.url,
-                            ip.map_or("-".to_string(), |ip| ip.to_string()),
-                            latency.as_millis()
-                        );
-                        Measurement {
-                            started_at,
-                            ended_at,
-                            is_successful: true,
-                            latency: Some(latency),
-                            ip,
-                            error: None,
+                let measurement = match result {
+                    Ok(response) => {
+                        let ip = response.remote_addr().map(|a| a.ip());
+                        let status = response.status();
+                        if status.is_success() {
+                            println!(
+                                "[{}] {} ({}) — {}ms",
+                                endpoint.id,
+                                endpoint.url,
+                                ip.map_or("-".to_string(), |ip| ip.to_string()),
+                                latency.as_millis()
+                            );
+                            Measurement {
+                                started_at,
+                                ended_at,
+                                is_successful: true,
+                                latency: Some(latency),
+                                ip,
+                                error: None,
+                            }
+                        } else {
+                            let body = response.text().await.unwrap_or_default();
+                            let error = format!("HTTP {} — {}", status, body.trim());
+                            eprintln!("[{}] {} — {}", endpoint.id, endpoint.url, error);
+                            Measurement {
+                                started_at,
+                                ended_at,
+                                is_successful: false,
+                                latency: Some(latency),
+                                ip,
+                                error: Some(error),
+                            }
                         }
-                    } else {
-                        let body = response.text().await.unwrap_or_default();
-                        let error = format!("HTTP {} — {}", status, body.trim());
+                    }
+                    Err(e) => {
+                        let error = util::describe_reqwest_error(&e);
                         eprintln!("[{}] {} — {}", endpoint.id, endpoint.url, error);
                         Measurement {
                             started_at,
                             ended_at,
                             is_successful: false,
-                            latency: Some(latency),
-                            ip,
+                            latency: None,
+                            ip: None,
                             error: Some(error),
                         }
                     }
-                }
-                Err(e) => {
-                    let error = util::describe_reqwest_error(&e);
-                    eprintln!("[{}] {} — {}", endpoint.id, endpoint.url, error);
-                    Measurement {
-                        started_at,
-                        ended_at,
-                        is_successful: false,
-                        latency: None,
-                        ip: None,
-                        error: Some(error),
-                    }
-                }
-            };
-
-            round.push((endpoint.id, measurement));
+                };
+                round.push((endpoint.id, measurement));
+                tokio::time::sleep(constants::SERIES_INTERVAL).await;
+            }
         }
-
-        if !first_run {
+        {
             let mut measurements = measurements.lock().unwrap();
             for (endpoint_id, measurement) in round {
                 push_measurement(&mut measurements, endpoint_id, measurement);
             }
         }
-
-        first_run = false;
         tokio::time::sleep(constants::POLL_INTERVAL).await;
+        _round_index += 1;
     }
 }

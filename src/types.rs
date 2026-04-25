@@ -6,8 +6,48 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 #[derive(Serialize)]
+pub struct Chain {
+    pub id: u32,
+    pub name: &'static str,
+    pub genesis_hash: &'static str,
+    pub ss58_prefix: u16,
+    pub relay_chain_id: Option<u32>,
+}
+
+#[derive(Serialize)]
+pub struct Provider {
+    pub id: u32,
+    pub name: &'static str,
+    pub website: &'static str,
+}
+
+#[derive(Serialize)]
+pub enum ServiceType {
+    SubstrateRPC,
+    EthereumRPC,
+}
+
+impl ServiceType {
+    pub fn get_request_body(&self) -> &'static str {
+        match self {
+            ServiceType::SubstrateRPC => {
+                r#"{"id":"1","jsonrpc":"2.0","method":"chain_getFinalizedHead","params":[]}"#
+            }
+            ServiceType::EthereumRPC => {
+                r#"{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}"#
+            }
+        }
+    }
+}
+
+#[derive(Serialize)]
 pub struct Endpoint {
     pub id: u32,
+    pub chain_id: u32,
+    pub provider_id: u32,
+    pub service_type: ServiceType,
+    pub supports_http: bool,
+    pub supports_ws: bool,
     pub url: &'static str,
 }
 
