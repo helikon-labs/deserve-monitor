@@ -91,8 +91,14 @@ async fn main() {
         .route("/", get(api::get_info))
         .route("/chains", get(api::get_chains))
         .route("/endpoints", get(api::get_endpoints))
+        .route("/chains/{id}/endpoints", get(api::get_chain_endpoints))
+        .route("/chains/{id}/providers", get(api::get_chain_providers))
         .route("/measurements", get(get_measurements))
         .route("/providers", get(api::get_providers))
+        .route(
+            "/providers/{id}/endpoints",
+            get(api::get_provider_endpoints),
+        )
         .with_state(Arc::clone(&measurements));
 
     tokio::spawn(async move {

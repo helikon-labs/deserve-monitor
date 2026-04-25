@@ -39,25 +39,25 @@ pub const IBP: Provider = Provider {
 };
 
 pub const DOTTERS: Provider = Provider {
-    id: 1,
+    id: 2,
     name: "Dotters",
     website: "https://dotters.network",
 };
 
 pub const DWELLIR: Provider = Provider {
-    id: 2,
+    id: 3,
     name: "Dwellir",
     website: "https://dwellir.com",
 };
 
 pub const ON_FINALITY: Provider = Provider {
-    id: 2,
+    id: 4,
     name: "OnFinality",
     website: "",
 };
 
 pub const LUCKY_FRIDAY: Provider = Provider {
-    id: 2,
+    id: 5,
     name: "LuckyFriday",
     website: "",
 };
@@ -125,7 +125,7 @@ pub const ENDPOINTS: &[Endpoint] = &[
     Endpoint {
         id: 6,
         chain_id: POLKADOT_CORETIME.id,
-        provider_id: IBP.id,
+        provider_id: DOTTERS.id,
         service_type: ServiceType::SubstrateRPC,
         supports_http: true,
         supports_ws: true,
